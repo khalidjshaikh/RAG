@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 .env
 vector_store.json
+response.md
+writeup.md
