@@ -48,23 +48,29 @@ class RAGEngine:
 
     def embed(self, text: str) -> np.ndarray:
         """Get an embedding vector for a single text string."""
+        print(f"  [api] Calling OpenAI embeddings API ({self.embedding_model})")
         resp = self.client.embeddings.create(
             model=self.embedding_model,
             input=text,
         )
         return np.array(resp.data[0].embedding, dtype=np.float32)
 
-    def embed_many(self, texts: List[str]) -> List[np.ndarray]:
-        """Batch-embed multiple texts."""
+    def embed_many(self, texts: List[str], batch_size: int = 100) -> List[np.ndarray]:
+        """Batch-embed multiple texts, splitting into smaller API calls if needed."""
         if not texts:
             return []
-        resp = self.client.embeddings.create(
-            model=self.embedding_model,
-            input=texts,
-        )
-        # Ensure we return in the same order
-        sorted_data = sorted(resp.data, key=lambda x: x.index)
-        return [np.array(d.embedding, dtype=np.float32) for d in sorted_data]
+        all_embeddings: List[np.ndarray] = []
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
+            print(f"  [api] Calling OpenAI embeddings API ({self.embedding_model}) — batch {i//batch_size + 1}/{(len(texts)-1)//batch_size + 1} ({len(batch)} texts)")
+            resp = self.client.embeddings.create(
+                model=self.embedding_model,
+                input=batch,
+            )
+            # Ensure we return in the same order
+            sorted_data = sorted(resp.data, key=lambda x: x.index)
+            all_embeddings.extend(np.array(d.embedding, dtype=np.float32) for d in sorted_data)
+        return all_embeddings
 
     # ── Ingestion ──────────────────────────────────────────────
 
@@ -121,8 +127,11 @@ class RAGEngine:
 
     def retrieve(self, query: str) -> List[tuple[Chunk, float]]:
         """Embed the query and return the top-k most similar chunks."""
+        print(f"  [rag] Searching vector store (top_k={self.top_k})")
         query_emb = self.embed(query)
-        return self.store.search(query_emb, self.top_k, self.similarity_threshold)
+        results = self.store.search(query_emb, self.top_k, self.similarity_threshold)
+        print(f"  [rag] Found {len(results)} relevant chunks")
+        return results
 
     # ── Generation ─────────────────────────────────────────────
 
@@ -146,6 +155,7 @@ class RAGEngine:
             f"Answer:"
         )
 
+        print(f"  [api] Calling OpenAI chat API ({self.llm_model})")
         resp = self.client.chat.completions.create(
             model=self.llm_model,
             temperature=self.temperature,
